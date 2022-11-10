@@ -1,116 +1,52 @@
-const uuid = require('uuid');
 const express = require('express');
-const onFinished = require('on-finished');
 const bodyParser = require('body-parser');
 const path = require('path');
 const port = 3000;
-const fs = require('fs');
+const jwt = require('jsonwebtoken');
+const dotenv = require('dotenv');
+const cookieParser = require('cookie-parser');
 
+dotenv.config();
 const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+app.use(cookieParser());
 
-const SESSION_KEY = 'Authorization';
-
-class Session {
-    #sessions = {}
-
-    constructor() {
-        try {
-            this.#sessions = fs.readFileSync('./sessions.json', 'utf8');
-            this.#sessions = JSON.parse(this.#sessions.trim());
-
-            console.log(this.#sessions);
-        } catch(e) {
-            this.#sessions = {};
-        }
-    }
-
-    #storeSessions() {
-        fs.writeFileSync('./sessions.json', JSON.stringify(this.#sessions), 'utf-8');
-    }
-
-    set(key, value) {
-        if (!value) {
-            value = {};
-        }
-        this.#sessions[key] = value;
-        this.#storeSessions();
-    }
-
-    get(key) {
-        return this.#sessions[key];
-    }
-
-    init(res) {
-        const sessionId = uuid.v4();
-        this.set(sessionId);
-
-        return sessionId;
-    }
-
-    destroy(req, res) {
-        const sessionId = req.sessionId;
-        delete this.#sessions[sessionId];
-        this.#storeSessions();
-    }
-}
-
-const sessions = new Session();
-
-app.use((req, res, next) => {
-    let currentSession = {};
-    let sessionId = req.get(SESSION_KEY);
-
-    if (sessionId) {
-        currentSession = sessions.get(sessionId);
-        if (!currentSession) {
-            currentSession = {};
-            sessionId = sessions.init(res);
-        }
-    } else {
-        sessionId = sessions.init(res);
-    }
-
-    req.session = currentSession;
-    req.sessionId = sessionId;
-
-    onFinished(req, () => {
-        const currentSession = req.session;
-        const sessionId = req.sessionId;
-        sessions.set(sessionId, currentSession);
-    });
-
-    next();
-});
+const secretKey = process.env.JWT_SECRET_KEY;
 
 app.get('/', (req, res) => {
-    if (req.session.username) {
-        return res.json({
-            username: req.session.username,
-            logout: 'http://localhost:3000/logout'
-        })
+    // Дістаємо токен з хедера
+    const token = req.headers.authorization?.split(' ')[1];
+    // Якщо токен існує
+    if (token) {
+        try {
+            // Перевіряєо цей токен та отримуємо дані з нього
+            const user = jwt.verify(token, secretKey);
+            console.log(user);
+            // Відправляємо дані на клієнт
+            return res.json({
+                username: user.username,
+                logout: 'http://localhost:3000/logout',
+            });
+        } catch {
+            console.log(`Token expired`);
+        }
     }
-    res.sendFile(path.join(__dirname+'/index.html'));
-})
-
-app.get('/logout', (req, res) => {
-    sessions.destroy(req, res);
-    res.redirect('/');
+    res.sendFile(path.join(__dirname + '/index.html'));
 });
 
 const users = [
     {
-        login: 'Login',
-        password: 'Password',
-        username: 'Username',
+        login: 'user',
+        password: 'user',
+        username: 'Bill',
     },
     {
-        login: 'Login1',
-        password: 'Password1',
-        username: 'Username1',
-    }
-]
+        login: 'admin',
+        password: 'admin',
+        username: 'Admin Rob',
+    },
+];
 
 app.post('/api/login', (req, res) => {
     const { login, password } = req.body;
@@ -119,19 +55,20 @@ app.post('/api/login', (req, res) => {
         if (user.login == login && user.password == password) {
             return true;
         }
-        return false
+        return false;
     });
 
     if (user) {
-        req.session.username = user.username;
-        req.session.login = user.login;
-
-        res.json({ token: req.sessionId });
+        // Створюємо новий токен, який буде зберігати в собі username, з часом життя 10 секунд (для тесту)
+        const token = jwt.sign({ username: user.username }, secretKey, {
+            expiresIn: '10s',
+        });
+        res.json({ token });
     }
 
     res.status(401).send();
 });
 
 app.listen(port, () => {
-    console.log(`Example app listening on port ${port}`)
-})
+    console.log(`Example app listening on port ${port}`);
+});
